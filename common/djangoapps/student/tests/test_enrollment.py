@@ -4,25 +4,21 @@ Tests for student enrollment.
 import ddt
 import unittest
 from mock import patch
-import mock
 from nose.plugins.attrib import attr
 
 from django.conf import settings
 from django.core.urlresolvers import reverse
-from django.db import IntegrityError
 from course_modes.models import CourseMode
 from xmodule.modulestore.tests.django_utils import SharedModuleStoreTestCase
 from xmodule.modulestore.tests.factories import CourseFactory
 from util.testing import UrlResetMixin
 from embargo.test_utils import restrict_course
 from student.tests.factories import UserFactory, CourseModeFactory, CourseEnrollmentFactory
-from student.models import CourseEnrollment, CourseFullError, MAX_RETRIES
+from student.models import CourseEnrollment, CourseFullError
 from student.roles import (
     CourseInstructorRole,
     CourseStaffRole,
 )
-
-ENROLLMENT_MODEL = 'student.models.CourseEnrollment'
 
 
 @attr('shard_3')
@@ -285,36 +281,3 @@ class EnrollmentTest(UrlResetMixin, SharedModuleStoreTestCase):
             params['email_opt_in'] = email_opt_in
 
         return self.client.post(reverse('change_enrollment'), params)
-
-    @ddt.data(*range(MAX_RETRIES + 1))
-    @mock.patch(ENROLLMENT_MODEL + '.objects.get_or_create')
-    def test_robust_course_enrollment(self, retries, mock_get_or_create):
-        """
-        Verify that the service is robust to IntegrityErrors during course enrollments.
-        """
-
-        # If side_effect is an iterable, each call to the mock will return
-        # the next value from the iterable.
-        # See: https://docs.python.org/3/library/unittest.mock.html#unittest.mock.Mock.side_effect.
-        errors = [IntegrityError] * retries
-        mock_get_or_create.side_effect = errors + [
-            (CourseEnrollment.objects.create(user=self.user, course_id=self.course.id), False)]
-
-        enrollment = CourseEnrollment.get_or_create_enrollment(self.user, self.course.id)
-
-        self.assertEqual(enrollment.user, self.user)
-        self.assertEqual(enrollment.course.id, self.course.id)
-
-    @mock.patch(ENROLLMENT_MODEL + '.objects.get_or_create')
-    def test_course_enrollment_failure(self, mock_get_or_create):
-        """
-        Verify that IntegrityErrors beyond the configured retry limit are raised.
-        """
-
-        errors = [IntegrityError] * (MAX_RETRIES + 1)
-
-        mock_get_or_create.side_effect = errors + [
-            (CourseEnrollment.objects.create(user=self.user, course_id=self.course.id), False)]
-
-        with self.assertRaises(IntegrityError):
-            CourseEnrollment.get_or_create_enrollment(self.user, self.course.id)

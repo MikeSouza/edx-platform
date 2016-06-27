@@ -19,7 +19,6 @@ import json
 import logging
 from pytz import UTC
 from urllib import urlencode
-import time
 import uuid
 
 import analytics
@@ -74,8 +73,6 @@ UNENROLLED_TO_ENROLLED = 'from unenrolled to enrolled'
 ALLOWEDTOENROLL_TO_UNENROLLED = 'from allowed to enroll to enrolled'
 UNENROLLED_TO_UNENROLLED = 'from unenrolled to unenrolled'
 DEFAULT_TRANSITION_STATE = 'N/A'
-MAX_RETRIES = 3
-COEFFICIENT = .15
 
 TRANSITION_STATES = (
     (UNENROLLED_TO_ALLOWEDTOENROLL, UNENROLLED_TO_ALLOWEDTOENROLL),
@@ -1005,6 +1002,7 @@ class CourseEnrollment(models.Model):
         ).format(self.user, self.course_id, self.created, self.is_active)
 
     @classmethod
+    @transaction.atomic
     def get_or_create_enrollment(cls, user, course_key):
         """
         Create an enrollment for a user in a class. By default *this enrollment
@@ -1032,36 +1030,14 @@ class CourseEnrollment(models.Model):
         if user.id is None:
             user.save()
 
-        # Database is set to REPEATABLE READ isolation level, get_or_create sometimes
-        # raises an IntegrityError, the retry logic here is meant to prevent IntegrityErrors
-        # for concurrent requests for course enrollments.
-        retry = 0
-        while True:
-            # Exponential backoff. Keep sleep time short to prevent running out of available workers.
-            countdown = 2 ** retry * COEFFICIENT
-
-            try:
-                log.info('Attempting to get or create enrollment for user [%s]. This is retry [%d].', user.username,
-                         retry)
-                enrollment, __ = cls.objects.get_or_create(
-                    user=user,
-                    course_id=course_key,
-                    defaults={
-                        'mode': CourseMode.DEFAULT_MODE_SLUG,
-                        'is_active': False
-                    }
-                )
-
-            except IntegrityError:
-                retry += 1
-                if retry <= MAX_RETRIES:
-                    log.warning('Failed to get or create enrollment for user [%s]. Sleeping for [%.2f] seconds.',
-                                user.username, countdown)
-                    time.sleep(countdown)
-                else:
-                    raise
-            else:
-                break
+        enrollment, created = cls.objects.get_or_create(
+            user=user,
+            course_id=course_key,
+            defaults={
+                'mode': CourseMode.DEFAULT_MODE_SLUG,
+                'is_active': False
+            }
+        )
 
         return enrollment
 
